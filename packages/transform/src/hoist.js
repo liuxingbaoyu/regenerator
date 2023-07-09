@@ -12,7 +12,7 @@ let hasOwn = Object.prototype.hasOwnProperty;
 // and replaces any Declaration nodes in its body with assignments, then
 // returns a VariableDeclaration containing just the names of the removed
 // declarations.
-exports.hoist = function(funPath) {
+exports.hoist = function (funPath) {
   const t = util.getTypes();
   t.assertFunction(funPath.node);
 
@@ -23,7 +23,7 @@ exports.hoist = function(funPath) {
     // TODO assert.equal(vdec.kind, "var");
     let exprs = [];
 
-    vdec.declarations.forEach(function(dec) {
+    vdec.declarations.forEach(function (dec) {
       // Note: We duplicate 'dec.id' here to ensure that the variable declaration IDs don't
       // have the same 'loc' value, since that can make sourcemaps and retainLines behave poorly.
       vars[dec.id.name] = t.identifier(dec.id.name);
@@ -33,26 +33,22 @@ exports.hoist = function(funPath) {
       scope.removeBinding(dec.id.name);
 
       if (dec.init) {
-        exprs.push(t.assignmentExpression(
-          "=", dec.id, dec.init
-        ));
+        exprs.push(t.assignmentExpression("=", dec.id, dec.init));
       } else if (includeIdentifiers) {
         exprs.push(dec.id);
       }
     });
 
-    if (exprs.length === 0)
-      return null;
+    if (exprs.length === 0) return null;
 
-    if (exprs.length === 1)
-      return exprs[0];
+    if (exprs.length === 1) return exprs[0];
 
     return t.sequenceExpression(exprs);
   }
 
   funPath.get("body").traverse({
     VariableDeclaration: {
-      exit: function(path) {
+      exit: function (path) {
         let expr = varDeclToExpr(path, false);
         if (expr === null) {
           path.remove();
@@ -65,24 +61,24 @@ exports.hoist = function(funPath) {
         // Since the original node has been either removed or replaced,
         // avoid traversing it any further.
         path.skip();
-      }
+      },
     },
 
-    ForStatement: function(path) {
+    ForStatement: function (path) {
       let init = path.get("init");
       if (init.isVariableDeclaration()) {
         util.replaceWithOrRemove(init, varDeclToExpr(init, false));
       }
     },
 
-    ForXStatement: function(path) {
+    ForXStatement: function (path) {
       let left = path.get("left");
       if (left.isVariableDeclaration()) {
         util.replaceWithOrRemove(left, varDeclToExpr(left, true));
       }
     },
 
-    FunctionDeclaration: function(path) {
+    FunctionDeclaration: function (path) {
       let node = path.node;
       vars[node.id.name] = node.id;
 
@@ -123,19 +119,19 @@ exports.hoist = function(funPath) {
       path.skip();
     },
 
-    FunctionExpression: function(path) {
+    FunctionExpression: function (path) {
       // Don't descend into nested function expressions.
       path.skip();
     },
 
-    ArrowFunctionExpression: function(path) {
+    ArrowFunctionExpression: function (path) {
       // Don't descend into nested function expressions.
       path.skip();
-    }
+    },
   });
 
   let paramNames = {};
-  funPath.get("params").forEach(function(paramPath) {
+  funPath.get("params").forEach(function (paramPath) {
     let param = paramPath.node;
     if (t.isIdentifier(param)) {
       paramNames[param.name] = param;
@@ -147,7 +143,7 @@ exports.hoist = function(funPath) {
 
   let declarations = [];
 
-  Object.keys(vars).forEach(function(name) {
+  Object.keys(vars).forEach(function (name) {
     if (!hasOwn.call(paramNames, name)) {
       declarations.push(t.variableDeclarator(vars[name], null));
     }

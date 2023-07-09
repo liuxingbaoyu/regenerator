@@ -39,7 +39,9 @@ export default function replaceShorthandObjectMethod(path) {
   const t = util.getTypes();
 
   if (!path.node || !t.isFunction(path.node)) {
-    throw new Error("replaceShorthandObjectMethod can only be called on Function AST node paths.");
+    throw new Error(
+      "replaceShorthandObjectMethod can only be called on Function AST node paths."
+    );
   }
 
   // this function only replaces shorthand object methods (called ObjectMethod
@@ -55,7 +57,7 @@ export default function replaceShorthandObjectMethod(path) {
 
   const parameters = path.node.params.map(function (param) {
     return t.cloneDeep(param);
-  })
+  });
 
   const functionExpression = t.functionExpression(
     null, // id
@@ -65,7 +67,8 @@ export default function replaceShorthandObjectMethod(path) {
     path.node.async
   );
 
-  util.replaceWithOrRemove(path,
+  util.replaceWithOrRemove(
+    path,
     t.objectProperty(
       t.cloneDeep(path.node.key), // key
       functionExpression, //value

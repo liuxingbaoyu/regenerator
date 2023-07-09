@@ -28,7 +28,8 @@
     "packages/*"
   ],
   "scripts": {
-    "test": "test/run.sh"
+    "test": "node test/run.js",
+    "format": "prettier packages/**/*.js --write"
   },
   "dependencies": {
     "@babel/core": "^7.22.8",
@@ -50,6 +51,7 @@
     "babel-check-duplicated-nodes": "^1.0.0",
     "browserify": "^17.0.0",
     "mocha": "^10.2.0",
+    "prettier": "^3.0.0",
     "promise": "^8.3.0",
     "semver": "^7.5.4",
     "uglify-js": "^3.17.4"

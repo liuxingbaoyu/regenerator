@@ -13,6 +13,6 @@ module.exports = {
     require("@babel/plugin-transform-arrow-functions"),
     require("@babel/plugin-transform-block-scoping"),
     require("@babel/plugin-transform-for-of"),
-    require("regenerator-transform").default
-  ]
+    require("regenerator-transform").default,
+  ],
 };

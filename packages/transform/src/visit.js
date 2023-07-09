@@ -24,14 +24,12 @@ exports.getVisitor = ({ types: t }) => ({
       [],
       t.cloneNode(node.body, false),
       node.generator,
-      node.async,
+      node.async
     );
 
-    path.get("body").set("body", [
-      t.returnStatement(
-        t.callExpression(container, []),
-      ),
-    ]);
+    path
+      .get("body")
+      .set("body", [t.returnStatement(t.callExpression(container, []))]);
 
     // Regardless of whether or not the wrapped function is a an async method
     // or generator the outer function should not be
@@ -39,12 +37,10 @@ exports.getVisitor = ({ types: t }) => ({
     node.generator = false;
 
     // Unwrap the wrapper IIFE's environment so super and this and such still work.
-    path
-      .get("body.body.0.argument.callee")
-      .unwrapFunctionEnvironment();
+    path.get("body.body.0.argument.callee").unwrapFunctionEnvironment();
   },
   Function: {
-    exit: util.wrapWithTypes(t, function(path, state) {
+    exit: util.wrapWithTypes(t, function (path, state) {
       let node = path.node;
 
       if (!shouldRegenerate(node, state)) return;
@@ -64,16 +60,18 @@ exports.getVisitor = ({ types: t }) => ({
       }
 
       bodyBlockPath.traverse(functionSentVisitor, {
-        context: contextId
+        context: contextId,
       });
 
       let outerBody = [];
       let innerBody = [];
 
-      bodyBlockPath.get("body").forEach(function(childPath) {
+      bodyBlockPath.get("body").forEach(function (childPath) {
         let node = childPath.node;
-        if (t.isExpressionStatement(node) &&
-            t.isStringLiteral(node.expression)) {
+        if (
+          t.isExpressionStatement(node) &&
+          t.isStringLiteral(node.expression)
+        ) {
           // Babylon represents directives like "use strict" as elements
           // of a bodyBlockPath.node.directives array, but they could just
           // as easily be represented (by other parsers) as traditional
@@ -113,10 +111,9 @@ exports.getVisitor = ({ types: t }) => ({
 
       if (context.usesArguments) {
         vars = vars || t.variableDeclaration("var", []);
-        vars.declarations.push(t.variableDeclarator(
-          t.clone(argsId),
-          t.identifier("arguments"),
-        ));
+        vars.declarations.push(
+          t.variableDeclarator(t.clone(argsId), t.identifier("arguments"))
+        );
       }
 
       let emitter = new Emitter(contextId);
@@ -153,8 +150,9 @@ exports.getVisitor = ({ types: t }) => ({
         // to use the global one.
         let currentScope = path.scope;
         do {
-          if (currentScope.hasOwnBinding("Promise")) currentScope.rename("Promise");
-        } while (currentScope = currentScope.parent);
+          if (currentScope.hasOwnBinding("Promise"))
+            currentScope.rename("Promise");
+        } while ((currentScope = currentScope.parent));
 
         wrapArgs.push(t.identifier("Promise"));
       }
@@ -187,7 +185,10 @@ exports.getVisitor = ({ types: t }) => ({
       }
 
       if (wasGeneratorFunction && t.isExpression(node)) {
-        util.replaceWithOrRemove(path, t.callExpression(util.runtimeProperty("mark"), [node]))
+        util.replaceWithOrRemove(
+          path,
+          t.callExpression(util.runtimeProperty("mark"), [node])
+        );
         path.addComment("leading", "#__PURE__");
       }
 
@@ -201,14 +202,14 @@ exports.getVisitor = ({ types: t }) => ({
 
           path.replaceWith(t.numericLiteral(path.node.value));
         },
-      })
+      });
 
       // Generators are processed in 'exit' handlers so that regenerator only has to run on
       // an ES5 AST, but that means traversal will not pick up newly inserted references
       // to things like 'regeneratorRuntime'. To avoid this, we explicitly requeue.
       path.requeue();
-    })
-  }
+    }),
+  },
 });
 
 // Check if a node should be transformed by regenerator
@@ -245,8 +246,10 @@ function getOuterFnExpr(funPath) {
     node.id = funPath.scope.parent.generateUidIdentifier("callee");
   }
 
-  if (node.generator && // Non-generator functions don't need to be marked.
-      t.isFunctionDeclaration(node)) {
+  if (
+    node.generator && // Non-generator functions don't need to be marked.
+    t.isFunctionDeclaration(node)
+  ) {
     // Return the identifier returned by runtime.mark(<node.id>).
     return getMarkedFunctionId(funPath);
   }
@@ -290,17 +293,15 @@ function getMarkedFunctionId(funPath) {
 
   // Get a new unique identifier for our marked variable.
   const markedId = blockPath.scope.generateUidIdentifier("marked");
-  const markCallExp = t.callExpression(
-    util.runtimeProperty("mark"),
-    [t.clone(node.id)]
-  );
+  const markCallExp = t.callExpression(util.runtimeProperty("mark"), [
+    t.clone(node.id),
+  ]);
 
-  const index = info.decl.declarations.push(
-    t.variableDeclarator(markedId, markCallExp)
-  ) - 1;
+  const index =
+    info.decl.declarations.push(t.variableDeclarator(markedId, markCallExp)) -
+    1;
 
-  const markCallExpPath =
-    info.declPath.get("declarations." + index + ".init");
+  const markCallExpPath = info.declPath.get("declarations." + index + ".init");
 
   assert.strictEqual(markCallExpPath.node, markCallExp);
 
@@ -310,46 +311,42 @@ function getMarkedFunctionId(funPath) {
 }
 
 let argumentsThisVisitor = {
-  "FunctionExpression|FunctionDeclaration|Method": function(path) {
+  "FunctionExpression|FunctionDeclaration|Method": function (path) {
     path.skip();
   },
 
-  Identifier: function(path, state) {
+  Identifier: function (path, state) {
     if (path.node.name === "arguments" && util.isReference(path)) {
       util.replaceWithOrRemove(path, state.getArgsId());
       state.usesArguments = true;
     }
   },
 
-  ThisExpression: function(path, state) {
+  ThisExpression: function (path, state) {
     state.usesThis = true;
-  }
+  },
 };
 
 let functionSentVisitor = {
   MetaProperty(path) {
     let { node } = path;
 
-    if (node.meta.name === "function" &&
-        node.property.name === "sent") {
+    if (node.meta.name === "function" && node.property.name === "sent") {
       const t = util.getTypes();
       util.replaceWithOrRemove(
         path,
-        t.memberExpression(
-          t.clone(this.context),
-          t.identifier("_sent")
-        )
+        t.memberExpression(t.clone(this.context), t.identifier("_sent"))
       );
     }
-  }
+  },
 };
 
 let awaitVisitor = {
-  Function: function(path) {
+  Function: function (path) {
     path.skip(); // Don't descend into nested function scopes.
   },
 
-  AwaitExpression: function(path) {
+  AwaitExpression: function (path) {
     const t = util.getTypes();
 
     // Convert await expressions to yield expressions.
@@ -358,12 +355,12 @@ let awaitVisitor = {
     // Transforming `await x` to `yield regeneratorRuntime.awrap(x)`
     // causes the argument to be wrapped in such a way that the runtime
     // can distinguish between awaited and merely yielded values.
-    util.replaceWithOrRemove(path, t.yieldExpression(
-      t.callExpression(
-        util.runtimeProperty("awrap"),
-        [argument]
-      ),
-      false
-    ));
-  }
+    util.replaceWithOrRemove(
+      path,
+      t.yieldExpression(
+        t.callExpression(util.runtimeProperty("awrap"), [argument]),
+        false
+      )
+    );
+  },
 };

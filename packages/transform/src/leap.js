@@ -137,7 +137,7 @@ function LeapManager(emitter) {
 let LMp = LeapManager.prototype;
 exports.LeapManager = LeapManager;
 
-LMp.withEntry = function(entry, callback) {
+LMp.withEntry = function (entry, callback) {
   assert.ok(entry instanceof Entry);
   this.entryStack.push(entry);
   try {
@@ -148,14 +148,13 @@ LMp.withEntry = function(entry, callback) {
   }
 };
 
-LMp._findLeapLocation = function(property, label) {
+LMp._findLeapLocation = function (property, label) {
   for (let i = this.entryStack.length - 1; i >= 0; --i) {
     let entry = this.entryStack[i];
     let loc = entry[property];
     if (loc) {
       if (label) {
-        if (entry.label &&
-            entry.label.name === label.name) {
+        if (entry.label && entry.label.name === label.name) {
           return loc;
         }
       } else if (entry instanceof LabeledEntry) {
@@ -170,10 +169,10 @@ LMp._findLeapLocation = function(property, label) {
   return null;
 };
 
-LMp.getBreakLoc = function(label) {
+LMp.getBreakLoc = function (label) {
   return this._findLeapLocation("breakLoc", label);
 };
 
-LMp.getContinueLoc = function(label) {
+LMp.getContinueLoc = function (label) {
   return this._findLeapLocation("continueLoc", label);
 };
