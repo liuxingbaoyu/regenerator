@@ -24,6 +24,9 @@
   },
   "main": "main.js",
   "bin": "bin/regenerator",
+  "workspaces": [
+    "packages/*"
+  ],
   "scripts": {
     "test": "test/run.sh"
   },
@@ -34,9 +37,9 @@
     "commoner": "^0.10.8",
     "private": "^0.1.8",
     "recast": "^0.23.2",
-    "regenerator-preset": "^0.14.1",
-    "regenerator-runtime": "^0.13.11",
-    "regenerator-transform": "^0.15.1",
+    "regenerator-preset": "workspace:^",
+    "regenerator-runtime": "workspace:^",
+    "regenerator-transform": "workspace:^",
     "through": "^2.3.8"
   },
   "devDependencies": {
