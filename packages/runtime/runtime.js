@@ -70,7 +70,7 @@ var runtime = (function (exports) {
     try {
       return { type: "normal", arg: fn.call(obj, arg) };
     } catch (err) {
-      return { type: "throw", arg: err };
+      return { type: StrThrow, arg: err };
     }
   }
 
@@ -78,6 +78,9 @@ var runtime = (function (exports) {
   var GenStateSuspendedYield = "suspendedYield";
   var GenStateExecuting = "executing";
   var GenStateCompleted = "completed";
+  var StrThrow = "throw";
+  var StrReturn = "return";
+  var StrNext = "next";
 
   // Returning this object from the innerFn has the same effect as
   // breaking out of the dispatch switch statement.
@@ -126,7 +129,7 @@ var runtime = (function (exports) {
   // Helper for defining the .next, .throw, and .return methods of the
   // Iterator interface in terms of a single ._invoke method.
   function defineIteratorMethods(prototype) {
-    ["next", "throw", "return"].forEach(function (method) {
+    [StrNext, StrThrow, StrReturn].forEach(function (method) {
       define(prototype, method, function (arg) {
         return this._invoke(method, arg);
       });
@@ -135,12 +138,13 @@ var runtime = (function (exports) {
 
   exports.isGeneratorFunction = function (genFun) {
     var ctor = typeof genFun === "function" && genFun.constructor;
-    return ctor
-      ? ctor === GeneratorFunction ||
-          // For the native GeneratorFunction constructor, the best we can
-          // do is to check its .name property.
-          (ctor.displayName || ctor.name) === "GeneratorFunction"
-      : false;
+    return (
+      ctor &&
+      (ctor === GeneratorFunction ||
+        // For the native GeneratorFunction constructor, the best we can
+        // do is to check its .name property.
+        (ctor.displayName || ctor.name) === "GeneratorFunction")
+    );
   };
 
   exports.mark = function (genFun) {
@@ -163,9 +167,9 @@ var runtime = (function (exports) {
   };
 
   function AsyncIterator(generator, PromiseImpl) {
-    function invoke(method, arg, resolve, reject) {
+    function invoke(method, resolve, reject, arg) {
       var record = tryCatch(generator[method], generator, arg);
-      if (record.type === "throw") {
+      if (record.type === StrThrow) {
         reject(record.arg);
       } else {
         var result = record.arg;
@@ -176,12 +180,8 @@ var runtime = (function (exports) {
           hasOwn.call(value, "__await")
         ) {
           return PromiseImpl.resolve(value.__await).then(
-            function (value) {
-              invoke("next", value, resolve, reject);
-            },
-            function (err) {
-              invoke("throw", err, resolve, reject);
-            }
+            invoke.bind(undefined, StrNext, resolve, reject),
+            invoke.bind(undefined, StrThrow, resolve, reject)
           );
         }
 
@@ -193,11 +193,9 @@ var runtime = (function (exports) {
             result.value = unwrapped;
             resolve(result);
           },
-          function (error) {
-            // If a rejected Promise was yielded, throw the rejection back
-            // into the async generator function so it can be handled there.
-            return invoke("throw", error, resolve, reject);
-          }
+          // If a rejected Promise was yielded, throw the rejection back
+          // into the async generator function so it can be handled there.
+          invoke.bind(undefined, StrThrow, resolve, reject)
         );
       }
     }
@@ -207,7 +205,7 @@ var runtime = (function (exports) {
     function enqueue(method, arg) {
       function callInvokeWithMethodAndArg() {
         return new PromiseImpl(function (resolve, reject) {
-          invoke(method, arg, resolve, reject);
+          invoke(method, resolve, reject, arg);
         });
       }
 
@@ -263,7 +261,7 @@ var runtime = (function (exports) {
         });
   };
 
-  function makeInvokeMethod(innerFn, self, context) {
+  function makeInvokeMethod(innerFn, self, ctx) {
     var state = GenStateSuspendedStart;
 
     return function invoke(method, arg) {
@@ -272,7 +270,7 @@ var runtime = (function (exports) {
       }
 
       if (state === GenStateCompleted) {
-        if (method === "throw") {
+        if (method === StrThrow) {
           throw arg;
         }
 
@@ -281,41 +279,45 @@ var runtime = (function (exports) {
         return doneResult();
       }
 
-      context.method = method;
-      context.arg = arg;
+      ctx.method = method;
+      ctx.arg = arg;
 
       while (true) {
-        var delegate = context.delegate;
+        var delegate = ctx.delegate;
         if (delegate) {
-          var delegateResult = maybeInvokeDelegate(delegate, context);
+          var delegateResult = maybeInvokeDelegate(delegate, ctx);
           if (delegateResult) {
             if (delegateResult === ContinueSentinel) continue;
             return delegateResult;
           }
         }
 
-        if (context.method === "next") {
-          // Setting context._sent for legacy support of Babel's
-          // function.sent implementation.
-          context.sent = context._sent = context.arg;
-        } else if (context.method === "throw") {
-          if (state === GenStateSuspendedStart) {
-            state = GenStateCompleted;
-            throw context.arg;
-          }
+        switch (ctx.method) {
+          case StrNext:
+            // Setting context._sent for legacy support of Babel's
+            // function.sent implementation.
+            ctx.sent = ctx._sent = ctx.arg;
+            break;
 
-          context.dispatchException(context.arg);
-        } else if (context.method === "return") {
-          context.abrupt("return", context.arg);
+          case StrThrow:
+            if (state === GenStateSuspendedStart) {
+              state = GenStateCompleted;
+              throw ctx.arg;
+            }
+            ctx.dispatchException(ctx.arg);
+            break;
+
+          case StrReturn:
+            ctx.abrupt(StrReturn, ctx.arg);
         }
 
         state = GenStateExecuting;
 
-        var record = tryCatch(innerFn, self, context);
+        var record = tryCatch(innerFn, self, ctx);
         if (record.type === "normal") {
           // If an exception is thrown from innerFn, we leave state ===
           // GenStateExecuting and loop back for another invocation.
-          state = context.done ? GenStateCompleted : GenStateSuspendedYield;
+          state = ctx.done ? GenStateCompleted : GenStateSuspendedYield;
 
           if (record.arg === ContinueSentinel) {
             continue;
@@ -323,14 +325,14 @@ var runtime = (function (exports) {
 
           return {
             value: record.arg,
-            done: context.done,
+            done: ctx.done,
           };
-        } else if (record.type === "throw") {
+        } else if (record.type === StrThrow) {
           state = GenStateCompleted;
           // Dispatch the exception by looping back around to the
           // context.dispatchException(context.arg) call above.
-          context.method = "throw";
-          context.arg = record.arg;
+          ctx.method = StrThrow;
+          ctx.arg = record.arg;
         }
       }
     };
@@ -340,32 +342,32 @@ var runtime = (function (exports) {
   // result, either by returning a { value, done } result from the
   // delegate iterator, or by modifying context.method and context.arg,
   // setting context.delegate to null, and returning the ContinueSentinel.
-  function maybeInvokeDelegate(delegate, context) {
-    var methodName = context.method;
+  function maybeInvokeDelegate(delegate, ctx) {
+    var methodName = ctx.method;
     var method = delegate.iterator[methodName];
     if (method === undefined) {
       // A .throw or .return when the delegate iterator has no .throw
       // method, or a missing .next mehtod, always terminate the
       // yield* loop.
-      context.delegate = null;
+      ctx.delegate = null;
 
       // Note: ["return"] must be used for ES3 parsing compatibility.
-      if (methodName === "throw" && delegate.iterator["return"]) {
+      if (methodName === StrThrow && delegate.iterator[StrReturn]) {
         // If the delegate iterator has a return method, give it a
         // chance to clean up.
-        context.method = "return";
-        context.arg = undefined;
-        maybeInvokeDelegate(delegate, context);
+        ctx.method = StrReturn;
+        ctx.arg = undefined;
+        maybeInvokeDelegate(delegate, ctx);
 
-        if (context.method === "throw") {
+        if (ctx.method === StrThrow) {
           // If maybeInvokeDelegate(context) changed context.method from
           // "return" to "throw", let that override the TypeError below.
           return ContinueSentinel;
         }
       }
-      if (methodName !== "return") {
-        context.method = "throw";
-        context.arg = new TypeError(
+      if (methodName !== StrReturn) {
+        ctx.method = StrThrow;
+        ctx.arg = new TypeError(
           "The iterator does not provide a '" + methodName + "' method"
         );
       }
@@ -373,31 +375,32 @@ var runtime = (function (exports) {
       return ContinueSentinel;
     }
 
-    var record = tryCatch(method, delegate.iterator, context.arg);
+    var record = tryCatch(method, delegate.iterator, ctx.arg),
+      { type, arg } = record;
 
-    if (record.type === "throw") {
-      context.method = "throw";
-      context.arg = record.arg;
-      context.delegate = null;
+    if (type === StrThrow) {
+      ctx.method = StrThrow;
+      ctx.arg = record.arg;
+      ctx.delegate = null;
       return ContinueSentinel;
     }
 
-    var info = record.arg;
+    // arg === info
 
-    if (!info) {
-      context.method = "throw";
-      context.arg = new TypeError("iterator result is not an object");
-      context.delegate = null;
+    if (!arg) {
+      ctx.method = StrThrow;
+      ctx.arg = new TypeError("iterator result is not an object");
+      ctx.delegate = null;
       return ContinueSentinel;
     }
 
-    if (info.done) {
+    if (arg.done) {
       // Assign the result of the finished delegate to the temporary
       // variable specified by delegate.resultName (see delegateYield).
-      context[delegate.resultName] = info.value;
+      ctx[delegate.resultName] = arg.value;
 
       // Resume execution at the desired location (see delegateYield).
-      context.next = delegate.nextLoc;
+      ctx.next = delegate.nextLoc;
 
       // If context.method was "throw" but the delegate handled the
       // exception, let the outer generator proceed normally. If
@@ -405,18 +408,18 @@ var runtime = (function (exports) {
       // "consumed" by the delegate iterator. If context.method was
       // "return", allow the original .return call to continue in the
       // outer generator.
-      if (context.method !== "return") {
-        context.method = "next";
-        context.arg = undefined;
+      if (ctx.method !== StrReturn) {
+        ctx.method = StrNext;
+        ctx.arg = undefined;
       }
     } else {
       // Re-yield the result returned by the delegate method.
-      return info;
+      return arg;
     }
 
     // The delegate iterator is finished, so forget it and continue with
     // the outer generator.
-    context.delegate = null;
+    ctx.delegate = null;
     return ContinueSentinel;
   }
 
@@ -465,9 +468,8 @@ var runtime = (function (exports) {
   }
 
   exports.keys = function (val) {
-    var object = Object(val);
-    var keys = [],
-      key;
+    var object = Object(val),
+      keys = [];
     for (var key in object) {
       keys.push(key);
     }
@@ -537,30 +539,30 @@ var runtime = (function (exports) {
     constructor: Context,
 
     reset: function (skipTempReset) {
-      var ctx = this;
+      var t = this;
 
-      ctx.prev = 0;
-      ctx.next = 0;
+      t.prev = 0;
+      t.next = 0;
       // Resetting context._sent for legacy support of Babel's
       // function.sent implementation.
-      ctx.sent = ctx._sent = undefined;
-      ctx.done = false;
-      ctx.delegate = null;
+      t.sent = t._sent = undefined;
+      t.done = false;
+      t.delegate = null;
 
-      ctx.method = "next";
-      ctx.arg = undefined;
+      t.method = StrNext;
+      t.arg = undefined;
 
-      ctx.tryEntries.forEach(resetTryEntry);
+      t.tryEntries.forEach(resetTryEntry);
 
       if (!skipTempReset) {
-        for (var name in ctx) {
+        for (var name in t) {
           // Not sure about the optimal order of these conditions:
           if (
             name.charAt(0) === "t" &&
-            hasOwn.call(ctx, name) &&
+            hasOwn.call(t, name) &&
             !isNaN(+name.slice(1))
           ) {
-            ctx[name] = undefined;
+            t[name] = undefined;
           }
         }
       }
@@ -569,9 +571,8 @@ var runtime = (function (exports) {
     stop: function () {
       this.done = true;
 
-      var rootEntry = this.tryEntries[0];
-      var rootRecord = rootEntry.completion;
-      if (rootRecord.type === "throw") {
+      var rootRecord = this.tryEntries[0].completion;
+      if (rootRecord.type === StrThrow) {
         throw rootRecord.arg;
       }
 
@@ -585,7 +586,7 @@ var runtime = (function (exports) {
 
       var context = this;
       function handle(loc) {
-        record.type = "throw";
+        record.type = StrThrow;
         record.arg = exception;
         context.next = loc;
       }
@@ -610,7 +611,7 @@ var runtime = (function (exports) {
           if (catchLoc && prev < catchLoc) {
             // If the dispatched exception was caught by a catch block,
             // then let that catch block handle the exception normally.
-            context.method = "next";
+            context.method = StrNext;
             context.arg = undefined;
 
             handle(catchLoc);
@@ -626,12 +627,12 @@ var runtime = (function (exports) {
     },
 
     abrupt: function (type, arg) {
-      var ctx = this;
+      var t = this;
 
       for (var i = this.tryEntries.length - 1; i >= 0; --i) {
-        var entry = ctx.tryEntries[i];
+        var entry = t.tryEntries[i];
         var { tryLoc, finallyLoc } = entry;
-        if (tryLoc <= ctx.prev && ctx.prev < finallyLoc) {
+        if (tryLoc <= t.prev && t.prev < finallyLoc) {
           break;
         }
         entry = undefined;
@@ -655,35 +656,35 @@ var runtime = (function (exports) {
       record.arg = arg;
 
       if (entry) {
-        ctx.method = "next";
-        ctx.next = entry.finallyLoc;
+        t.method = StrNext;
+        t.next = entry.finallyLoc;
         return ContinueSentinel;
       }
 
-      return ctx.complete(record);
+      return t.complete(record);
     },
 
     complete: function (record, afterLoc) {
-      var ctx = this,
+      var t = this,
         { arg } = record;
 
       switch (record.type) {
-        case "throw":
+        case StrThrow:
           throw arg;
 
         case "break":
         case "continue":
-          ctx.next = arg;
+          t.next = arg;
           break;
 
-        case "return":
-          ctx.rval = ctx.arg = arg;
-          ctx.method = "return";
-          ctx.next = "end";
+        case StrReturn:
+          t.rval = t.arg = arg;
+          t.method = StrReturn;
+          t.next = "end";
           break;
 
         case "normal":
-          if (afterLoc) ctx.next = afterLoc;
+          if (afterLoc) t.next = afterLoc;
       }
 
       return ContinueSentinel;
@@ -705,7 +706,7 @@ var runtime = (function (exports) {
         var entry = this.tryEntries[i];
         if (entry.tryLoc === tryLoc) {
           var record = entry.completion;
-          if (record.type === "throw") {
+          if (record.type === StrThrow) {
             var thrown = record.arg;
             resetTryEntry(entry);
           }
@@ -725,7 +726,7 @@ var runtime = (function (exports) {
         nextLoc: nextLoc,
       };
 
-      if (this.method === "next") {
+      if (this.method === StrNext) {
         // Deliberately forget the last sent value so that we don't
         // accidentally pass it on to the delegate.
         this.arg = undefined;
