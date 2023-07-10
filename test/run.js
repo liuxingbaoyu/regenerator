@@ -70,7 +70,7 @@ function flush() {
     } else {
       if (cmd === "mocha") {
         cmd = "yarn mocha";
-      } else if (fs.readFileSync(cmd).startsWith("#!")) {
+      } else if (fs.readFileSync(cmd, "utf8").startsWith("#!")) {
         cmd = "node " + cmd;
       }
 

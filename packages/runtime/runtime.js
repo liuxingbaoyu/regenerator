@@ -21,10 +21,10 @@ var runtime = (function (exports) {
   var asyncIteratorSymbol = $Symbol.asyncIterator || "@@asyncIterator";
   var toStringTagSymbol = $Symbol.toStringTag || "@@toStringTag";
 
-  function define(obj, key, value) {
+  function define(obj, key, value, noEnumerable) {
     Object.defineProperty(obj, key, {
       value: value,
-      enumerable: true,
+      enumerable: !!noEnumerable,
       configurable: true,
       writable: true,
     });
@@ -115,14 +115,8 @@ var runtime = (function (exports) {
     Generator.prototype =
       Object.create(IteratorPrototype));
   GeneratorFunction.prototype = GeneratorFunctionPrototype;
-  defineProperty(Gp, "constructor", {
-    value: GeneratorFunctionPrototype,
-    configurable: true,
-  });
-  defineProperty(GeneratorFunctionPrototype, "constructor", {
-    value: GeneratorFunction,
-    configurable: true,
-  });
+  define(Gp, "constructor", GeneratorFunctionPrototype, true);
+  define(GeneratorFunctionPrototype, "constructor", GeneratorFunction, true);
   GeneratorFunction.displayName = define(
     GeneratorFunctionPrototype,
     toStringTagSymbol,
@@ -242,7 +236,7 @@ var runtime = (function (exports) {
 
     // Define the unified helper method that is used to implement .next,
     // .throw, and .return (see defineIteratorMethods).
-    defineProperty(this, "_invoke", { value: enqueue });
+    define(this, "_invoke", enqueue);
   }
 
   defineIteratorMethods(AsyncIterator.prototype);
@@ -255,7 +249,7 @@ var runtime = (function (exports) {
   // AsyncIterator objects; they just return a Promise for the value of
   // the final result produced by the iterator.
   exports.async = function (innerFn, outerFn, self, tryLocsList, PromiseImpl) {
-    if (PromiseImpl === void 0) PromiseImpl = Promise;
+    if (PromiseImpl === undefined) PromiseImpl = Promise;
 
     var iter = new AsyncIterator(
       wrap(innerFn, outerFn, self, tryLocsList),
@@ -446,18 +440,12 @@ var runtime = (function (exports) {
   });
 
   function pushTryEntry(locs) {
-    var entry = { tryLoc: locs[0] };
-
-    if (1 in locs) {
-      entry.catchLoc = locs[1];
-    }
-
-    if (2 in locs) {
-      entry.finallyLoc = locs[2];
-      entry.afterLoc = locs[3];
-    }
-
-    this.tryEntries.push(entry);
+    this.tryEntries.push({
+      tryLoc: locs[0],
+      catchLoc: locs[1],
+      finallyLoc: locs[2],
+      afterLoc: locs[3],
+    });
   }
 
   function resetTryEntry(entry) {
@@ -478,28 +466,28 @@ var runtime = (function (exports) {
 
   exports.keys = function (val) {
     var object = Object(val);
-    var keys = [];
+    var keys = [],
+      key;
     for (var key in object) {
       keys.push(key);
     }
-    keys.reverse();
 
     // Rather than returning an object with a next method, we keep
     // things simple and return the next function itself.
     return function next() {
-      while (keys.length) {
-        var key = keys.pop();
-        if (key in object) {
-          next.value = key;
-          next.done = false;
-          return next;
-        }
-      }
-
       // To avoid creating an additional object, we just hang the .value
       // and .done properties off the next function object itself. This
       // also ensures that the minifier will not anonymize the function.
       next.done = true;
+
+      while ((key = keys.shift())) {
+        if (key in object) {
+          next.value = key;
+          next.done = false;
+          break;
+        }
+      }
+
       return next;
     };
   };
@@ -518,11 +506,11 @@ var runtime = (function (exports) {
       if (!isNaN(iterable.length)) {
         var i = -1,
           next = function next() {
+            next.done = false;
             while (++i < iterable.length) {
               if (hasOwn.call(iterable, i)) {
                 next.value = iterable[i];
-                next.done = false;
-                return next;
+                break;
               }
             }
 
@@ -549,28 +537,30 @@ var runtime = (function (exports) {
     constructor: Context,
 
     reset: function (skipTempReset) {
-      this.prev = 0;
-      this.next = 0;
+      var ctx = this;
+
+      ctx.prev = 0;
+      ctx.next = 0;
       // Resetting context._sent for legacy support of Babel's
       // function.sent implementation.
-      this.sent = this._sent = undefined;
-      this.done = false;
-      this.delegate = null;
+      ctx.sent = ctx._sent = undefined;
+      ctx.done = false;
+      ctx.delegate = null;
 
-      this.method = "next";
-      this.arg = undefined;
+      ctx.method = "next";
+      ctx.arg = undefined;
 
-      this.tryEntries.forEach(resetTryEntry);
+      ctx.tryEntries.forEach(resetTryEntry);
 
       if (!skipTempReset) {
-        for (var name in this) {
+        for (var name in ctx) {
           // Not sure about the optimal order of these conditions:
           if (
             name.charAt(0) === "t" &&
-            hasOwn.call(this, name) &&
+            hasOwn.call(ctx, name) &&
             !isNaN(+name.slice(1))
           ) {
-            this[name] = undefined;
+            ctx[name] = undefined;
           }
         }
       }
@@ -594,51 +584,41 @@ var runtime = (function (exports) {
       }
 
       var context = this;
-      function handle(loc, caught) {
+      function handle(loc) {
         record.type = "throw";
         record.arg = exception;
         context.next = loc;
-
-        if (caught) {
-          // If the dispatched exception was caught by a catch block,
-          // then let that catch block handle the exception normally.
-          context.method = "next";
-          context.arg = undefined;
-        }
-
-        return !!caught;
       }
 
       for (var i = this.tryEntries.length - 1; i >= 0; --i) {
-        var entry = this.tryEntries[i];
-        var record = entry.completion;
+        var {
+          completion: record,
+          tryLoc,
+          catchLoc,
+          finallyLoc,
+        } = this.tryEntries[i];
+        var { prev } = context;
 
-        if (entry.tryLoc === "root") {
+        if (tryLoc === "root") {
           // Exception thrown outside of any try block that could handle
           // it, so set the completion value of the entire function to
           // throw the exception.
           return handle("end");
         }
 
-        if (entry.tryLoc <= this.prev) {
-          var hasCatch = hasOwn.call(entry, "catchLoc");
-          var hasFinally = hasOwn.call(entry, "finallyLoc");
+        if (tryLoc <= prev) {
+          if (catchLoc && prev < catchLoc) {
+            // If the dispatched exception was caught by a catch block,
+            // then let that catch block handle the exception normally.
+            context.method = "next";
+            context.arg = undefined;
 
-          if (hasCatch && hasFinally) {
-            if (this.prev < entry.catchLoc) {
-              return handle(entry.catchLoc, true);
-            } else if (this.prev < entry.finallyLoc) {
-              return handle(entry.finallyLoc);
-            }
-          } else if (hasCatch) {
-            if (this.prev < entry.catchLoc) {
-              return handle(entry.catchLoc, true);
-            }
-          } else if (hasFinally) {
-            if (this.prev < entry.finallyLoc) {
-              return handle(entry.finallyLoc);
-            }
-          } else {
+            handle(catchLoc);
+            return true;
+          } else if (prev < finallyLoc) {
+            handle(finallyLoc);
+            return false;
+          } else if (!catchLoc && !finallyLoc) {
             throw new Error("try statement without catch or finally");
           }
         }
@@ -646,55 +626,64 @@ var runtime = (function (exports) {
     },
 
     abrupt: function (type, arg) {
+      var ctx = this;
+
       for (var i = this.tryEntries.length - 1; i >= 0; --i) {
-        var entry = this.tryEntries[i];
-        if (
-          entry.tryLoc <= this.prev &&
-          hasOwn.call(entry, "finallyLoc") &&
-          this.prev < entry.finallyLoc
-        ) {
-          var finallyEntry = entry;
+        var entry = ctx.tryEntries[i];
+        var { tryLoc, finallyLoc } = entry;
+        if (tryLoc <= ctx.prev && ctx.prev < finallyLoc) {
           break;
         }
+        entry = undefined;
       }
 
+      // entry === finallyEntry
+
       if (
-        finallyEntry &&
+        entry &&
         (type === "break" || type === "continue") &&
-        finallyEntry.tryLoc <= arg &&
-        arg <= finallyEntry.finallyLoc
+        tryLoc <= arg &&
+        arg <= finallyLoc
       ) {
         // Ignore the finally entry if control is not jumping to a
         // location outside the try/catch block.
-        finallyEntry = null;
+        entry = undefined;
       }
 
-      var record = finallyEntry ? finallyEntry.completion : {};
+      var record = entry ? entry.completion : {};
       record.type = type;
       record.arg = arg;
 
-      if (finallyEntry) {
-        this.method = "next";
-        this.next = finallyEntry.finallyLoc;
+      if (entry) {
+        ctx.method = "next";
+        ctx.next = entry.finallyLoc;
         return ContinueSentinel;
       }
 
-      return this.complete(record);
+      return ctx.complete(record);
     },
 
     complete: function (record, afterLoc) {
-      if (record.type === "throw") {
-        throw record.arg;
-      }
+      var ctx = this,
+        { arg } = record;
 
-      if (record.type === "break" || record.type === "continue") {
-        this.next = record.arg;
-      } else if (record.type === "return") {
-        this.rval = this.arg = record.arg;
-        this.method = "return";
-        this.next = "end";
-      } else if (record.type === "normal" && afterLoc) {
-        this.next = afterLoc;
+      switch (record.type) {
+        case "throw":
+          throw arg;
+
+        case "break":
+        case "continue":
+          ctx.next = arg;
+          break;
+
+        case "return":
+          ctx.rval = ctx.arg = arg;
+          ctx.method = "return";
+          ctx.next = "end";
+          break;
+
+        case "normal":
+          if (afterLoc) ctx.next = afterLoc;
       }
 
       return ContinueSentinel;
